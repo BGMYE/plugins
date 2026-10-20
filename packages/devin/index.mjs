@@ -1066,10 +1066,12 @@ function fields(b) {
 }
 
 // frame wraps a message as the one frame of a Connect stream. A message
-// past GZIP_AT goes gzipped (flag 1, with Connect-Content-Encoding: gzip):
-// Devin's nginx turns away a body past 10 MiB on the wire (413), while its
-// server takes a gzipped frame up to 32 MiB once inflated.
-const GZIP_AT = 64 << 10
+// past GZIP_AT goes gzipped (flag 1, with Connect-Content-Encoding: gzip),
+// as the devin CLI sends it: Devin's nginx turns away a body past 10 MiB on
+// the wire (413). The CLI (3000.11.92) gzips a GetChatMessage of 8,333
+// bytes and sends one of 8,083 as it is, and names the encoding only on a
+// gzipped request; it sends no Connect-Accept-Encoding.
+const GZIP_AT = 8 << 10
 function frame(msg) {
   const zip = msg.length > GZIP_AT
   const body = zip ? gzipSync(msg) : msg
@@ -1635,12 +1637,13 @@ const errorResponse = ({ status, message }) =>
 // complete answers a chat completion through GetChatMessage.
 async function complete({ key, server, families }, chat, signal) {
   const uid = variantFor(families, chat.model, effortOf(chat.reasoning_effort))
+  const body = frame(build(chat, uid, key))
   let res
   try {
     res = await fetch(server + CHAT_RPC, {
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", "Connect-Protocol-Version": "1", "Connect-Content-Encoding": "gzip", "Connect-Accept-Encoding": "gzip", Authorization: "Basic " + key },
-      body: frame(build(chat, uid, key)),
+      headers: { "Content-Type": "application/connect+proto", "Connect-Protocol-Version": "1", ...(body[0] & 1 ? { "Connect-Content-Encoding": "gzip" } : {}), Authorization: "Basic " + key },
+      body,
       signal,
     })
   } catch (e) {
